@@ -51,10 +51,16 @@ def _externalize(m):
 # tiny inline utf-8 SVG icons stay put. The app's <img loading="lazy"> and media players
 # then fetch each file only when the reader reaches or plays it.
 _front = re.sub(r"data:(image|audio|video)/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)", _externalize, _front)
+# Normalize the front page's own address to the canonical www host so Facebook, LinkedIn and
+# Google treat the homepage as one page (og:url, canonical and the share-image URL all agree).
+_front = _front.replace("https://caribbeanledger.com/", "https://www.caribbeanledger.com/")
 open(os.path.join(OUT, "index.html"), "w", encoding="utf-8").write(_front)
 print("front-door: %.1fMB -> %.2fMB  (photos %d, audio %d, video %d externalized)"
       % (_front_before / 1048576, len(_front) / 1048576, _counts["image"], _counts["audio"], _counts["video"]))
+# Publish the share card. The paper's <head> references ledger-share.png; earlier builds only
+# wrote og-card.png, so homepage shares came back blank. Publish both names so the card resolves.
 shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "og-card.png"))
+shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "ledger-share.png"))
 
 def slugify(s):
     s = re.sub(r"[’'\"]", "", s or "")
