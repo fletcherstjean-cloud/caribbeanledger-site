@@ -178,6 +178,15 @@ HUBS=[
  ("energy","Energy","Caribbean oil, gas and energy news, from The Caribbean Ledger.",r"\boil\b|\bgas\b|energy|petroleum|\blng\b|exxon|stabroek|refiner"),
  ("tourism","Tourism","Caribbean tourism and travel-business news, from The Caribbean Ledger.",r"touris|arrivals|hotel|cruise|stayover|visitor"),
  ("banking","Banking and Finance","Caribbean banking, finance and markets news, from The Caribbean Ledger.",r"\bbank|finance|\bloan|credit union|central bank|interest rate|de-risk|de-risk"),
+ ("markets","Caribbean Markets","Caribbean markets, stock exchanges and investing news, from The Caribbean Ledger.",r"\bmarket|stock exchange|\bjse\b|\bttse\b|\bbse\b|\bgasci\b|\becse\b|\bdse\b|equit|\bbond\b|investor|\bindex\b|shares?\b|listing"),
+ ("economy","Caribbean Economy","Caribbean economy, growth, inflation and public finance news, from The Caribbean Ledger.",r"\beconom|\bgdp\b|inflation|growth|fiscal|public finance|\bdebt\b|\bimf\b|budget|deficit|remittance"),
+ ("politics","Caribbean Politics","Caribbean politics, elections and governance news, from The Caribbean Ledger.",r"politic|election|parliament|\bgovernment\b|prime minister|governance|\bcaricom\b|\bminister\b|\bcabinet\b|\bvote\b|opposition"),
+ ("policy","Caribbean Policy","Caribbean policy, regulation and reform news, from The Caribbean Ledger.",r"\bpolicy\b|\bpolicies\b|regulat|\breform|legislat|\bfiscal\b|monetary|\btrade\b|public finance|\btariff|sanction|\bframework|\bmandate\b"),
+ ("sports","Caribbean Sports","Caribbean sports news: cricket, football, athletics and the diaspora, from The Caribbean Ledger.",r"\bsports?\b|cricket|\bwindies\b|\bt20\b|\bcpl\b|football|\bfifa\b|athletic|olympic|\bnba\b|\bmlb\b|\bnfl\b|premier league|soca warriors|reggae boyz|\btrack\b|sprinter|\bgoal\b|tournament"),
+ ("careers","Caribbean Jobs and Careers","Caribbean jobs, careers and hiring news, from The Caribbean Ledger.",r"\bjobs?\b|career|hiring|vacanc|\bemploy|recruit|workforce|labou?r market|\bwages?\b|talent"),
+ ("lifestyle","Caribbean Lifestyle","Caribbean lifestyle, food, travel and living, from The Caribbean Ledger.",r"lifestyle|\bfood\b|cuisine|restaurant|\btravel\b|wellness|real estate|propert|luxury|\bliving\b|dining"),
+ ("culture","Caribbean Culture","Caribbean culture, arts, music and heritage, from The Caribbean Ledger.",r"cultur|\barts?\b|\bmusic\b|heritage|\bfestival|creole|literature|\bfilm\b|reggae|dancehall|\bsoca\b|calypso|museum"),
+ ("carnival","Caribbean Carnival","Caribbean carnival, mas, soca and the road, from The Caribbean Ledger.",r"carnival|\bmas\b|masquerade|\bsoca\b|calypso|j'?ouvert|bacchanal|crop over|junkanoo|\bfete\b"),
 ]
 hub_nav=[]
 for hslug,hname,hdesc,pat in HUBS:
