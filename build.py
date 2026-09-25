@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # The Caribbean Ledger — site build. Cloudflare Pages runs: python3 build.py  (output dir: dist)
-import json, re, os, base64, html, datetime, shutil
+import json, re, os, base64, html, datetime, shutil, hashlib
 
 BASE = os.environ.get("SITE_BASE", "https://www.caribbeanledger.com")
 # Google Analytics 4: put your Measurement ID here (looks like G-XXXXXXXXXX). Empty = analytics off.
@@ -17,8 +17,43 @@ os.makedirs(OUT + "/stories"); os.makedirs(OUT + "/images")
 
 arts = json.load(open(os.path.join(ROOT, "content", "articles.json"), encoding="utf-8"))
 
-# --- homepage (interactive app) and static assets ---
-shutil.copyfile(os.path.join(ROOT, "app", "index.html"), os.path.join(OUT, "index.html"))
+# --- homepage (interactive app): externalize inlined photos so the front page ships light ---
+# The authoring file (app/index.html) carries every cover photo inline as a base64 data URI,
+# which is why it weighs ~22MB and every visitor downloads the whole paper before it paints.
+# Here we lift each photo out to a real, content-hashed file under /img/ (identical bytes, so
+# the page renders pixel-for-pixel the same) and replace the inline data with a URL. The
+# <img loading="lazy"> tags already in the app then load each photo only as the reader reaches it.
+os.makedirs(OUT + "/img", exist_ok=True)
+os.makedirs(OUT + "/media", exist_ok=True)
+_front = open(os.path.join(ROOT, "app", "index.html"), encoding="utf-8", errors="ignore").read()
+_front_before = len(_front)
+_ext_map = {"jpeg": "jpg", "jpg": "jpg", "png": "png", "webp": "webp", "gif": "gif", "svg+xml": "svg",
+            "mpeg": "mp3", "mp3": "mp3", "wav": "wav", "ogg": "ogg", "mp4": "mp4", "webm": "webm"}
+_imgcache = {}
+_counts = {"image": 0, "audio": 0, "video": 0}
+def _externalize(m):
+    kind, subtype, b64 = m.group(1), m.group(2), m.group(3)
+    if b64 in _imgcache: return _imgcache[b64]
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return m.group(0)  # leave anything that will not decode exactly as it was
+    ext = _ext_map.get(subtype, "bin")
+    folder = "img" if kind == "image" else "media"
+    fn = hashlib.sha1(raw).hexdigest()[:16] + "." + ext
+    p = f"{OUT}/{folder}/{fn}"
+    if not os.path.exists(p): open(p, "wb").write(raw)
+    url = "/%s/%s" % (folder, fn)
+    _imgcache[b64] = url
+    _counts[kind] += 1
+    return url
+# Photos, audio and video baked in as base64 are lifted to real files (identical bytes);
+# tiny inline utf-8 SVG icons stay put. The app's <img loading="lazy"> and media players
+# then fetch each file only when the reader reaches or plays it.
+_front = re.sub(r"data:(image|audio|video)/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)", _externalize, _front)
+open(os.path.join(OUT, "index.html"), "w", encoding="utf-8").write(_front)
+print("front-door: %.1fMB -> %.2fMB  (photos %d, audio %d, video %d externalized)"
+      % (_front_before / 1048576, len(_front) / 1048576, _counts["image"], _counts["audio"], _counts["video"]))
 shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "og-card.png"))
 
 def slugify(s):
