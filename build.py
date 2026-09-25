@@ -3,6 +3,13 @@
 import json, re, os, base64, html, datetime, shutil
 
 BASE = os.environ.get("SITE_BASE", "https://www.caribbeanledger.com")
+# Google Analytics 4: put your Measurement ID here (looks like G-XXXXXXXXXX). Empty = analytics off.
+GA_ID = os.environ.get("SITE_GA_ID", "G-K8WVQGYV3W")
+def ga_tag():
+    if not GA_ID: return ""
+    return ('<script async src="https://www.googletagmanager.com/gtag/js?id=' + GA_ID + '"></script>'
+            '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+            'gtag("js",new Date());gtag("config","' + GA_ID + '");</script>')
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT  = os.path.join(ROOT, "dist")
 if os.path.exists(OUT): shutil.rmtree(OUT)
@@ -61,7 +68,7 @@ h1{font-size:34px;line-height:1.15;margin:0 0 14px;color:var(--navy)}.stand{font
 figure{margin:20px 0}figure img{width:100%;border-radius:4px}blockquote{border-left:3px solid var(--gold);margin:20px 0;padding:4px 0 4px 18px;font-size:20px;color:var(--ink2)}
 footer{border-top:2px solid var(--navy);margin-top:40px;padding:22px 0 40px;font-family:Arial,sans-serif;font-size:13px;color:var(--muted)}footer a{color:var(--gold)}
 .readapp{display:inline-block;margin-top:8px;font-family:Arial,sans-serif;font-size:13px}"""
-sm=[("/","1.0",None)]; idx=[]
+sm=[("/","1.0",None)]; idx=[]; newsitems=[]; rssitems=[]; allrecs=[]; today_d=datetime.date.today()
 for a in arts:
     hd=a.get("headline")
     if not hd: continue
@@ -90,6 +97,13 @@ for a in arts:
 <footer><div>The Caribbean Ledger · Published by St. Jean &amp; Co.</div><div><a href="{BASE}/">Home</a> · <a href="{BASE}/stories/">All stories</a></div></footer></div></body></html>"""
     open(f"{OUT}/stories/{slug}.html","w",encoding="utf-8").write(doc)
     sm.append((f"/stories/{slug}.html","0.8",pub)); idx.append((hd,f"/stories/{slug}.html",sec,filed))
+    if pub:
+        try:
+            pd=datetime.date.fromisoformat(pub)
+            rssitems.append((pd,hd,url,desc))
+            if (today_d-pd).days<=2: newsitems.append((url,pub,hd))
+        except Exception: pass
+    allrecs.append((hd, f"/stories/{slug}.html", f"{hd} {stand} {eye} {sec} {sub}".lower(), filed, pub))
 lis="\n".join(f"<li><a href='.{u[len('/stories'):]}'>{esc(h)}</a> <span class='m'>{esc(s)}{(' · '+esc(f)) if f else ''}</span></li>" for h,u,s,f in idx)
 open(f"{OUT}/stories/index.html","w",encoding="utf-8").write(f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>All stories — The Caribbean Ledger</title><meta name="description" content="Every story from The Caribbean Ledger."><link rel="canonical" href="{BASE}/stories/">
@@ -97,8 +111,94 @@ open(f"{OUT}/stories/index.html","w",encoding="utf-8").write(f"""<!doctype html>
 <header class="mast"><div class="wrap"><a class="brand" href="{BASE}/">The Caribbean Ledger</a><span class="tag">All stories</span></div></header>
 <div class="wrap"><h1>All stories</h1><ul>{lis}</ul><footer><a href="{BASE}/">Home</a></footer></div></body></html>""")
 sm.append(("/stories/","0.6",None))
+
+# --- Country and topic hubs: SEO landing pages for the searches people actually type ---
+os.makedirs(OUT+"/topics", exist_ok=True)
+HUBS=[
+ ("jamaica","Jamaica","Jamaica business, markets and economy news, from The Caribbean Ledger.",r"jamaic|kingston|\bjse\b|bank of jamaica|\bboj\b|montego|gracekennedy|ncb"),
+ ("guyana","Guyana","Guyana oil, business and economy news, from The Caribbean Ledger.",r"guyan|georgetown|gasci|stabroek|exxon"),
+ ("trinidad-and-tobago","Trinidad and Tobago","Trinidad and Tobago business, energy and markets news, from The Caribbean Ledger.",r"trinidad|tobago|port of spain|\bttse\b|ansa|point lisas"),
+ ("barbados","Barbados","Barbados business and economy news, from The Caribbean Ledger.",r"barbado|bridgetown|\bbse\b"),
+ ("bahamas","The Bahamas","The Bahamas business, tourism and economy news, from The Caribbean Ledger.",r"baham|nassau"),
+ ("energy","Energy","Caribbean oil, gas and energy news, from The Caribbean Ledger.",r"\boil\b|\bgas\b|energy|petroleum|\blng\b|exxon|stabroek|refiner"),
+ ("tourism","Tourism","Caribbean tourism and travel-business news, from The Caribbean Ledger.",r"touris|arrivals|hotel|cruise|stayover|visitor"),
+ ("banking","Banking and Finance","Caribbean banking, finance and markets news, from The Caribbean Ledger.",r"\bbank|finance|\bloan|credit union|central bank|interest rate|de-risk|de-risk"),
+]
+hub_nav=[]
+for hslug,hname,hdesc,pat in HUBS:
+    rx=re.compile(pat,re.I)
+    ms=[r for r in allrecs if rx.search(r[2])]
+    ms.sort(key=lambda r:(r[4] or ""),reverse=True)
+    if not ms: continue
+    hurl=f"{BASE}/topics/{hslug}.html"
+    li=[]
+    for h,u,_t,fl,_p in ms[:40]:
+        meta=(" <span class='m'>"+esc(fl)+"</span>") if fl else ""
+        li.append("<li><a href='../stories/"+esc(u.rsplit('/',1)[-1])+"'>"+esc(h)+"</a>"+meta+"</li>")
+    items="".join(li)
+    hld={"@context":"https://schema.org","@type":"CollectionPage","name":f"{hname} news — The Caribbean Ledger","description":hdesc,"url":hurl,"isPartOf":{"@type":"WebSite","name":"The Caribbean Ledger","url":BASE+"/"},"publisher":{"@type":"Organization","name":"The Caribbean Ledger"}}
+    hdoc=f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(hname)} news — The Caribbean Ledger</title><meta name="description" content="{esc(hdesc)}"><link rel="canonical" href="{hurl}">
+<meta property="og:type" content="website"><meta property="og:title" content="{esc(hname)} news — The Caribbean Ledger"><meta property="og:description" content="{esc(hdesc)}"><meta property="og:url" content="{hurl}"><meta property="og:image" content="{BASE}/og-card.png">
+<script type="application/ld+json">{json.dumps(hld,ensure_ascii=False)}</script>
+<style>{CSS} li{{margin:9px 0;list-style:none}}ul{{padding:0}}.m{{font-family:Arial;font-size:12px;color:var(--muted)}}h1{{margin-top:6px}}.lead{{font-size:18px;color:var(--ink2);margin:0 0 22px}}</style></head><body>
+<header class="mast"><div class="wrap"><a class="brand" href="{BASE}/">The Caribbean Ledger</a><span class="tag">{esc(hname)}</span></div></header>
+<div class="wrap"><div class="eyebrow">Caribbean Ledger · Topic</div><h1>{esc(hname)} news</h1><p class="lead">{esc(hdesc)}</p><ul>{items}</ul>
+<footer><div>The Caribbean Ledger · Published by St. Jean &amp; Co.</div><div><a href="{BASE}/">Home</a> · <a href="{BASE}/stories/">All stories</a></div></footer></div></body></html>"""
+    open(f"{OUT}/topics/{hslug}.html","w",encoding="utf-8").write(hdoc)
+    sm.append((f"/topics/{hslug}.html","0.7",today_d.isoformat()))
+    hub_nav.append((hname,hurl,len(ms)))
+
 today=datetime.date.today().isoformat()
 rows=[f"  <url><loc>{BASE}{loc}</loc><lastmod>{lm or today}</lastmod><priority>{pr}</priority></url>" for loc,pr,lm in sm]
 open(f"{OUT}/sitemap.xml","w",encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'+"\n".join(rows)+"\n</urlset>\n")
-open(f"{OUT}/robots.txt","w",encoding="utf-8").write(f"User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\n")
-print("BUILD OK — pages:", len(idx), "images:", len(os.listdir(OUT+'/images')))
+open(f"{OUT}/robots.txt","w",encoding="utf-8").write(f"User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\nSitemap: {BASE}/news-sitemap.xml\n")
+
+# --- Google News sitemap (articles from the last 2 days only, per Google News rules) ---
+nrows=[]
+for loc,pub,hd in newsitems:
+    nrows.append(f'  <url><loc>{loc}</loc><news:news><news:publication><news:name>The Caribbean Ledger</news:name><news:language>en</news:language></news:publication><news:publication_date>{pub}</news:publication_date><news:title>{esc(hd)}</news:title></news:news></url>')
+open(f"{OUT}/news-sitemap.xml","w",encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">\n'+"\n".join(nrows)+"\n</urlset>\n")
+
+# --- RSS feed (newest 40, for Google News, aggregators and readers) ---
+rssitems.sort(key=lambda r:r[0], reverse=True)
+ritems=[]
+for pd,hd,url,desc in rssitems[:40]:
+    pubrfc=datetime.datetime(pd.year,pd.month,pd.day).strftime("%a, %d %b %Y 08:00:00 GMT")
+    ritems.append(f"<item><title>{esc(hd)}</title><link>{url}</link><guid>{url}</guid><pubDate>{pubrfc}</pubDate><description>{esc(desc)}</description></item>")
+open(f"{OUT}/rss.xml","w",encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>The Caribbean Ledger</title><link>'+BASE+'/</link><description>Business, markets and policy across the Caribbean and its diaspora.</description><language>en</language>\n'+"\n".join(ritems)+"\n</channel></rss>\n")
+
+# --- keep the custom domain pinned on every deploy, and serve a graceful 404 ---
+host = BASE.split("://")[-1].strip("/")
+open(f"{OUT}/CNAME","w",encoding="utf-8").write(host + "\n")
+open(f"{OUT}/404.html","w",encoding="utf-8").write(
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    '<title>The Caribbean Ledger</title>'
+    '<meta name="robots" content="noindex">'
+    f'<link rel="canonical" href="{BASE}/">'
+    f'<meta http-equiv="refresh" content="0; url={BASE}/">'
+    f'<script>location.replace("{BASE}/");</script>'
+    '<style>body{background:#FBF6E9;color:#0F1B2D;font-family:Georgia,serif;'
+    'display:flex;align-items:center;justify-content:center;height:100vh;margin:0}</style>'
+    '</head><body>Taking you to The Caribbean Ledger&hellip;</body></html>')
+
+# --- inject Google Analytics into every generated page (front page, articles, topic hubs) ---
+ga_injected = 0
+if GA_ID:
+    tag = ga_tag()
+    for _root, _dirs, _files in os.walk(OUT):
+        for _fn in _files:
+            if _fn.endswith(".html"):
+                _p = os.path.join(_root, _fn)
+                _s = open(_p, encoding="utf-8", errors="ignore").read()
+                _changed = False
+                # activate any pre-placed GA tag that still holds the placeholder id
+                if "G-XXXXXXXXXX" in _s:
+                    _s = _s.replace("G-XXXXXXXXXX", GA_ID); _changed = True
+                # inject a GA tag into pages that have none
+                if "gtag/js?id=" not in _s and "</head>" in _s:
+                    _s = _s.replace("</head>", tag + "</head>", 1); _changed = True
+                if _changed:
+                    open(_p, "w", encoding="utf-8").write(_s); ga_injected += 1
+
+print("BUILD OK — pages:", len(idx), "images:", len(os.listdir(OUT+'/images')), "news-sitemap:", len(newsitems), "rss:", min(40,len(rssitems)), "domain:", host, "analytics:", (GA_ID or "off"), "pages tagged:", ga_injected)
