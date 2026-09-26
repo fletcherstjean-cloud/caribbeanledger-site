@@ -61,6 +61,15 @@ print("front-door: %.1fMB -> %.2fMB  (photos %d, audio %d, video %d externalized
 # wrote og-card.png, so homepage shares came back blank. Publish both names so the card resolves.
 shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "og-card.png"))
 shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "ledger-share.png"))
+# Ledger TV: publish the channel page and lift its inline open-video out to /media, exactly like
+# the front door. Served from the live https host, its YouTube segments play (a local file cannot).
+_tvsrc = os.path.join(ROOT, "app", "tv.html")
+if os.path.exists(_tvsrc):
+    _tv = open(_tvsrc, encoding="utf-8", errors="ignore").read()
+    _tv = re.sub(r"data:(image|audio|video)/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)", _externalize, _tv)
+    _tv = _tv.replace("https://caribbeanledger.com/", "https://www.caribbeanledger.com/")
+    open(os.path.join(OUT, "tv.html"), "w", encoding="utf-8").write(_tv)
+    print("ledger-tv: published tv.html (%.2fMB)" % (len(_tv) / 1048576))
 
 def slugify(s):
     s = re.sub(r"[’'\"]", "", s or "")
@@ -245,6 +254,32 @@ open(f"{OUT}/404.html","w",encoding="utf-8").write(
     '<style>body{background:#FBF6E9;color:#0F1B2D;font-family:Georgia,serif;'
     'display:flex;align-items:center;justify-content:center;height:100vh;margin:0}</style>'
     '</head><body>Taking you to The Caribbean Ledger&hellip;</body></html>')
+
+# --- SEO: give the JavaScript homepage a crawlable headline index ---
+# The front page is an app, so a search engine that does not run the app sees no text
+# and no links. This adds a no-JS section with the latest headlines and every section,
+# so crawlers can read real content and reach each static story page and topic hub.
+try:
+    _hp_path = os.path.join(OUT, "index.html")
+    _hp = open(_hp_path, encoding="utf-8", errors="ignore").read()
+    if "ledger-headlines" not in _hp:
+        _items = "".join(
+            f'<li><a href="{u}">{esc(h)}</a></li>' for h, u, _se, _fi in idx[:40])
+        _hubs = " &middot; ".join(
+            f'<a href="{hu}">{esc(hn)}</a>' for hn, hu, _hc in hub_nav)
+        _block = (
+            '<noscript><section id="ledger-headlines">'
+            '<h1>The Caribbean Ledger &mdash; Caribbean business, markets and policy news</h1>'
+            "<p>The region's business and policy paper of record. Latest headlines from across the basin:</p>"
+            f'<ul>{_items}</ul>'
+            f'<p>Sections: {_hubs} &middot; <a href="/stories/">All stories</a></p>'
+            '</section></noscript>')
+        _hp = _hp.replace("</body>", _block + "</body>", 1)
+        open(_hp_path, "w", encoding="utf-8").write(_hp)
+        print("seo: crawlable homepage index injected (%d headlines, %d sections)"
+              % (min(40, len(idx)), len(hub_nav)))
+except Exception as _e:
+    print("seo: homepage index skipped:", _e)
 
 # --- inject Google Analytics into every generated page (front page, articles, topic hubs) ---
 ga_injected = 0
