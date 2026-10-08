@@ -55,12 +55,36 @@ _front = re.sub(r"data:(image|audio|video)/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]
 # Google treat the homepage as one page (og:url, canonical and the share-image URL all agree).
 _front = _front.replace("https://caribbeanledger.com/", "https://www.caribbeanledger.com/")
 open(os.path.join(OUT, "index.html"), "w", encoding="utf-8").write(_front)
+# Runtime article feed: the live app fetches this at load, so index.html stays a fixed-size
+# shell and new stories live here instead of being baked in. Base64 images lift to /img (deduped
+# with the front door); articles authored with /img paths pass through untouched.
+_feed = json.dumps(arts, ensure_ascii=False)
+_feed = re.sub(r"data:(image|audio|video)/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)", _externalize, _feed)
+open(os.path.join(OUT, "feed.json"), "w", encoding="utf-8").write(_feed)
+print("feed.json: %d articles, %.2fMB (images externalized)" % (len(arts), len(_feed)/1048576))
 print("front-door: %.1fMB -> %.2fMB  (photos %d, audio %d, video %d externalized)"
       % (_front_before / 1048576, len(_front) / 1048576, _counts["image"], _counts["audio"], _counts["video"]))
 # Publish the share card. The paper's <head> references ledger-share.png; earlier builds only
 # wrote og-card.png, so homepage shares came back blank. Publish both names so the card resolves.
 shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "og-card.png"))
 shutil.copyfile(os.path.join(ROOT, "assets", "og-card.png"), os.path.join(OUT, "ledger-share.png"))
+# Caribbean Festivals: external gallery images (kept out of the 25MiB source file).
+_festsrc=os.path.join(ROOT,"festivals")
+if os.path.isdir(_festsrc):
+    shutil.copytree(_festsrc, os.path.join(OUT,"festivals"))
+    print("festivals: copied %d gallery images" % len(os.listdir(_festsrc)))
+_authsrc=os.path.join(ROOT,"authors")
+if os.path.isdir(_authsrc):
+    shutil.copytree(_authsrc, os.path.join(OUT,"authors"))
+    print("authors: copied %d writer photos" % len([f for f in os.listdir(_authsrc) if not f.startswith(".")]))
+_newsimg=os.path.join(ROOT,"news-img")
+if os.path.isdir(_newsimg):
+    shutil.copytree(_newsimg, os.path.join(OUT,"news-img"))
+    print("news-img: copied %d article photos" % len([f for f in os.listdir(_newsimg) if not f.startswith(".")]))
+_skysrc=os.path.join(ROOT,"wxsky")
+if os.path.isdir(_skysrc):
+    shutil.copytree(_skysrc, os.path.join(OUT,"wxsky"))
+    print("wxsky: copied %d weather hero photos" % len([f for f in os.listdir(_skysrc) if not f.startswith(".")]))
 # Ledger TV: publish the channel page and lift its inline open-video out to /media, exactly like
 # the front door. Served from the live https host, its YouTube segments play (a local file cannot).
 _tvsrc = os.path.join(ROOT, "app", "tv.html")
@@ -222,10 +246,163 @@ for hslug,hname,hdesc,pat in HUBS:
     sm.append((f"/topics/{hslug}.html","0.7",today_d.isoformat()))
     hub_nav.append((hname,hurl,len(ms)))
 
+# --- Jobs board: management and up. Crawlable page per role with Google for Jobs (JobPosting)
+#     structured data, automatic expiry at validThrough, plus sector and island landing pages. ---
+import urllib.parse as _ulp
+JCSS = CSS + """
+.jwrap{max-width:860px}.jhead{border-bottom:2px solid var(--navy);margin-bottom:20px}
+.jtag{display:inline-block;font-family:Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-right:6px}
+.jtag.exec{background:#0F1B2D;color:#fff}.jtag.mgmt{background:#8F6E2E;color:#fff}.jtag.feat{background:#fff;color:#8F6E2E;border:1px solid #8F6E2E}
+.jcard{display:block;background:#fff;border:1px solid var(--rule);border-radius:6px;padding:18px 20px;margin:0 0 14px;text-decoration:none;color:inherit}
+.jcard h3{font-size:20px;color:var(--navy);margin:8px 0 4px}.jcard .emp{font-family:Arial,sans-serif;font-size:13px;color:var(--ink2);margin-bottom:8px}
+.jcard .sum{font-size:15px;color:var(--ink2);margin:0}.jcard .meta{font-family:Arial,sans-serif;font-size:11px;color:var(--muted);margin-top:11px;letter-spacing:.02em}
+.jmeta{font-family:Arial,sans-serif;font-size:13px;color:var(--ink2);background:#fff;border:1px solid var(--rule);border-radius:6px;padding:14px 18px;margin:18px 0}
+.jmeta b{color:var(--navy)}.japply{display:inline-block;background:#8F6E2E;color:#fff;font-family:Arial,sans-serif;font-weight:bold;font-size:14px;text-decoration:none;padding:13px 26px;border-radius:7px;margin:6px 0}
+.jsrc{font-family:Arial,sans-serif;font-size:12px;color:var(--muted);margin-top:12px;border-top:1px solid var(--rule);padding-top:10px}
+.jchips a{display:inline-block;font-family:Arial,sans-serif;font-size:12px;color:var(--navy);background:#fff;border:1px solid var(--rule);border-radius:999px;padding:6px 12px;margin:0 6px 8px 0;text-decoration:none}
+"""
+def jmast(tag):
+    return (f'<header class="mast jhead"><div class="wrap jwrap"><a class="brand" href="{BASE}/">The Caribbean Ledger</a>'
+            f'<span class="tag">{esc(tag)}</span></div></header>')
+def jfoot():
+    return (f'<footer><div>The Caribbean Ledger Job Board &middot; Leadership and management roles across the Caribbean &middot; Published by St. Jean &amp; Co.</div>'
+            f'<div><a href="{BASE}/jobs/">All roles</a> &middot; <a href="{BASE}/">Home</a></div></footer>')
+def jpage(title, desc, canon, body, ld=None):
+    ldtag = f'<script type="application/ld+json">{json.dumps(ld,ensure_ascii=False)}</script>' if ld else ""
+    return (f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(title)}</title><meta name="description" content="{esc(desc)}"><link rel="canonical" href="{canon}">
+<meta property="og:type" content="website"><meta property="og:site_name" content="The Caribbean Ledger"><meta property="og:title" content="{esc(title)}">
+<meta property="og:description" content="{esc(desc)}"><meta property="og:url" content="{canon}"><meta property="og:image" content="{BASE}/og-card.png">
+{ldtag}<style>{JCSS}</style></head><body>{body}</body></html>""")
+def apply_link(j):
+    ref=j.get("ref","")
+    if j.get("applyUrl"):
+        u=j["applyUrl"]; sep="&" if "?" in u else "?"
+        return u+sep+"utm_source=caribbeanledger&utm_medium=jobboard&utm_campaign="+_ulp.quote(ref)
+    em=j.get("applyEmail")
+    if em:
+        subj="Application via The Caribbean Ledger — %s (Ref %s)" % (j.get("title",""), ref)
+        bdy=("This application was submitted through The Caribbean Ledger Job Board.\r\n\r\n"
+             "Role: %s\r\nReference: %s\r\n\r\nPlease find my CV attached." % (j.get("title",""), ref))
+        return "mailto:%s?subject=%s&body=%s" % (em, _ulp.quote(subj), _ulp.quote(bdy))
+    return BASE+"/jobs/"
+TIER_LABEL={"exec":"Executive","mgmt":"Management"}
+jobs_all=[]
+try:
+    jobs_all=json.load(open(os.path.join(ROOT,"content","jobs.json"),encoding="utf-8"))
+except Exception as _je:
+    print("jobs: no jobs.json (", _je, ")")
+def _vt_ok(j):
+    vt=(j.get("validThrough") or "").strip()[:10]
+    try: return datetime.date.fromisoformat(vt) >= today_d
+    except Exception: return False
+jobs=[j for j in jobs_all if j.get("id") and j.get("title") and _vt_ok(j)]
+jobs_expired=len(jobs_all)-len(jobs)
+# management and up only
+jobs=[j for j in jobs if j.get("tier") in ("exec","mgmt")]
+jobs.sort(key=lambda j:(0 if j.get("featured") else 1, j.get("datePosted") or ""), reverse=False)
+jobs.sort(key=lambda j:(j.get("datePosted") or ""), reverse=True)
+jobs.sort(key=lambda j:(0 if j.get("featured") else 1))
+def job_card(j):
+    tier=j.get("tier","mgmt")
+    badges=f'<span class="jtag {tier}">{esc(TIER_LABEL.get(tier,"Management"))}</span>'
+    if j.get("featured"): badges+='<span class="jtag feat">Featured</span>'
+    meta=" &middot; ".join([x for x in [esc(j.get("sector","")),esc(j.get("type","Full-time") or "Full-time"),esc(j.get("salaryText","")),("Posted "+esc(j.get("datePosted",""))) if j.get("datePosted") else ""] if x])
+    return (f'<a class="jcard" href="{BASE}/jobs/{esc(j["id"])}.html">{badges}'
+            f'<h3>{esc(j.get("title",""))}</h3>'
+            f'<div class="emp">{esc(j.get("employer",""))} &middot; {esc(j.get("city",""))}, {esc(j.get("territory",""))}</div>'
+            f'<p class="sum">{esc(j.get("summary",""))}</p>'
+            f'<div class="meta">{meta}</div></a>')
+if jobs or True:
+    os.makedirs(OUT+"/jobs/sector", exist_ok=True)
+    os.makedirs(OUT+"/jobs/location", exist_ok=True)
+    jobs_sm=[]
+    # per-job crawlable pages with JobPosting structured data
+    for j in jobs:
+        canon=f'{BASE}/jobs/{j["id"]}.html'
+        vt=(j.get("validThrough") or "")[:10]
+        ld={"@context":"https://schema.org/","@type":"JobPosting","title":j.get("title",""),
+            "description":j.get("description") or ("<p>"+esc(j.get("summary",""))+"</p>"),
+            "identifier":{"@type":"PropertyValue","name":"The Caribbean Ledger","value":j.get("ref","")},
+            "datePosted":(j.get("datePosted") or "")[:10],"validThrough":vt+"T23:59:59",
+            "employmentType":j.get("employmentType","FULL_TIME"),
+            "hiringOrganization":{"@type":"Organization","name":j.get("employer","")},
+            "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress","addressLocality":j.get("city",""),"addressRegion":j.get("territory",""),"addressCountry":j.get("countryCode","")}},
+            "directApply":False}
+        if j.get("employerUrl"): ld["hiringOrganization"]["sameAs"]=j["employerUrl"]
+        if j.get("baseMin"):
+            ld["baseSalary"]={"@type":"MonetaryAmount","currency":j.get("salaryCurrency","USD"),
+                "value":{"@type":"QuantitativeValue","minValue":j.get("baseMin"),"maxValue":j.get("baseMax") or j.get("baseMin"),"unitText":j.get("salaryUnit","YEAR")}}
+        tier=j.get("tier","mgmt")
+        badges=f'<span class="jtag {tier}">{esc(TIER_LABEL.get(tier,"Management"))}</span>'
+        if j.get("featured"): badges+='<span class="jtag feat">Featured</span>'
+        aurl=apply_link(j)
+        metarow=(f'<div class="jmeta"><b>Employer:</b> {esc(j.get("employer",""))}<br>'
+                 f'<b>Location:</b> {esc(j.get("city",""))}, {esc(j.get("territory",""))}<br>'
+                 f'<b>Sector:</b> {esc(j.get("sector",""))}<br>'
+                 f'<b>Type:</b> {esc(j.get("type","Full-time") or "Full-time")}<br>'
+                 f'<b>Compensation:</b> {esc(j.get("salaryText",""))}<br>'
+                 f'<b>Posted:</b> {esc(j.get("datePosted",""))} &middot; <b>Closes:</b> {esc(vt)}</div>')
+        body=(jmast("Job Board")+f'<div class="wrap jwrap"><article><div class="eyebrow">The Caribbean Ledger &middot; Leadership roles</div>'
+              f'{badges}<h1>{esc(j.get("title",""))}</h1>'
+              f'<p class="stand">{esc(j.get("employer",""))} &middot; {esc(j.get("city",""))}, {esc(j.get("territory",""))}</p>'
+              f'{metarow}{j.get("description") or ("<p>"+esc(j.get("summary",""))+"</p>")}'
+              f'<p><a class="japply" href="{esc(aurl)}">Apply via The Caribbean Ledger &rsaquo;</a></p>'
+              f'<div class="jsrc">Sourced via The Caribbean Ledger Job Board &middot; Reference {esc(j.get("ref",""))}. '
+              f'When you apply through the Ledger, the employer sees this reference, so your application is credited to the Ledger.</div>'
+              f'<p class="jchips" style="margin-top:18px"><a href="{BASE}/jobs/sector/{slugify(j.get("sector",""))}.html">More {esc(j.get("sector",""))} roles</a>'
+              f'<a href="{BASE}/jobs/location/{slugify(j.get("territory",""))}.html">More roles in {esc(j.get("territory",""))}</a>'
+              f'<a href="{BASE}/jobs/">All leadership roles</a></p></article>{jfoot()}</div>')
+        title=f'{j.get("title","")} — {j.get("employer","")} — The Caribbean Ledger Jobs'
+        open(f'{OUT}/jobs/{j["id"]}.html',"w",encoding="utf-8").write(jpage(title,j.get("summary",""),canon,body,ld))
+        sm.append((f'/jobs/{j["id"]}.html',"0.7",(j.get("datePosted") or today_d.isoformat())[:10]))
+        jobs_sm.append(canon)
+    # board landing
+    feat=[j for j in jobs if j.get("featured")]; rest=[j for j in jobs if not j.get("featured")]
+    sectors=sorted(set(j.get("sector","") for j in jobs if j.get("sector")))
+    terrs=sorted(set(j.get("territory","") for j in jobs if j.get("territory")))
+    chips=('<p class="jchips"><b style="font-family:Arial;font-size:12px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase">By sector</b><br>'
+           +"".join(f'<a href="{BASE}/jobs/sector/{slugify(s)}.html">{esc(s)}</a>' for s in sectors)+'</p>'
+           +'<p class="jchips"><b style="font-family:Arial;font-size:12px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase">By island</b><br>'
+           +"".join(f'<a href="{BASE}/jobs/location/{slugify(t)}.html">{esc(t)}</a>' for t in terrs)+'</p>')
+    listing=("".join(job_card(j) for j in feat)+("<hr style='border:0;border-top:1px solid var(--rule);margin:18px 0'>" if feat and rest else "")+"".join(job_card(j) for j in rest)) or "<p>New leadership roles are loading. Follow the board to get them first.</p>"
+    itemld={"@context":"https://schema.org","@type":"ItemList","itemListElement":[{"@type":"ListItem","position":i+1,"url":u} for i,u in enumerate(jobs_sm)]}
+    board=(jmast("Job Board")+f'<div class="wrap jwrap"><div class="eyebrow">The Caribbean Ledger &middot; Job Board</div>'
+           f'<h1>Leadership &amp; management roles across the Caribbean</h1>'
+           f'<p class="stand">Executive, board and senior management appointments from the banks, institutions and leading employers of the region. Every role is verified, and closed roles come off the board automatically.</p>'
+           f'{chips}<hr style="border:0;border-top:2px solid var(--navy);margin:18px 0">{listing}{jfoot()}</div>')
+    open(f"{OUT}/jobs/index.html","w",encoding="utf-8").write(jpage(
+        "Caribbean executive & management jobs — The Caribbean Ledger Job Board",
+        "Leadership, executive, board and senior management roles across the Caribbean. Verified listings from the region's banks, institutions and leading employers.",
+        f"{BASE}/jobs/", board, itemld))
+    sm.append(("/jobs/","0.8",today_d.isoformat()))
+    # sector + island landing pages
+    def landing(kind, value, members):
+        slug=slugify(value); canon=f"{BASE}/jobs/{kind}/{slug}.html"
+        if kind=="sector":
+            h=f"{value} jobs in the Caribbean"; d=f"Leadership and management {value} roles across the Caribbean, from The Caribbean Ledger Job Board."
+        else:
+            h=f"Executive & management jobs in {value}"; d=f"Leadership and management roles in {value}, from The Caribbean Ledger Job Board."
+        ld={"@context":"https://schema.org","@type":"CollectionPage","name":h,"description":d,"url":canon}
+        body=(jmast("Job Board")+f'<div class="wrap jwrap"><div class="eyebrow">The Caribbean Ledger &middot; Job Board</div>'
+              f'<h1>{esc(h)}</h1><p class="stand">{esc(d)}</p>'
+              f'<p class="jchips"><a href="{BASE}/jobs/">All leadership roles</a></p>'
+              f'<hr style="border:0;border-top:2px solid var(--navy);margin:18px 0">'
+              +("".join(job_card(j) for j in members) or "<p>No current roles here. Follow the board to be first.</p>")
+              +f'{jfoot()}</div>')
+        open(f"{OUT}/jobs/{kind}/{slug}.html","w",encoding="utf-8").write(jpage(f"{h} — The Caribbean Ledger",d,canon,body,ld))
+        sm.append((f"/jobs/{kind}/{slug}.html","0.6",today_d.isoformat()))
+    for s in sectors: landing("sector", s, [j for j in jobs if j.get("sector")==s])
+    for t in terrs: landing("location", t, [j for j in jobs if j.get("territory")==t])
+    # dedicated jobs sitemap
+    jrows="\n".join(f"  <url><loc>{u}</loc><lastmod>{today_d.isoformat()}</lastmod><priority>0.7</priority></url>" for u in ([f"{BASE}/jobs/"]+jobs_sm))
+    open(f"{OUT}/jobs-sitemap.xml","w",encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'+jrows+"\n</urlset>\n")
+    print("jobs: %d live roles published (%d expired dropped), %d sectors, %d islands" % (len(jobs), jobs_expired, len(sectors), len(terrs)))
+
 today=datetime.date.today().isoformat()
 rows=[f"  <url><loc>{BASE}{loc}</loc><lastmod>{lm or today}</lastmod><priority>{pr}</priority></url>" for loc,pr,lm in sm]
 open(f"{OUT}/sitemap.xml","w",encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'+"\n".join(rows)+"\n</urlset>\n")
-open(f"{OUT}/robots.txt","w",encoding="utf-8").write(f"User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\nSitemap: {BASE}/news-sitemap.xml\n")
+open(f"{OUT}/robots.txt","w",encoding="utf-8").write(f"User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\nSitemap: {BASE}/news-sitemap.xml\nSitemap: {BASE}/jobs-sitemap.xml\n")
 
 # --- Google News sitemap (articles from the last 2 days only, per Google News rules) ---
 nrows=[]
